@@ -215,6 +215,12 @@ export function minimax(board, depth, alpha, beta, isMaximizing) {
 
 // Get best AI move using minimax
 export function getAIMove(board, difficulty = 'medium') {
+  // Safeguard: return null if no valid moves exist
+  const validMoves = getValidMoves(board);
+  if (validMoves.length === 0) {
+    return null;
+  }
+
   const depth = difficulty === 'easy' ? 2 : difficulty === 'medium' ? 4 : 6;
   const result = minimax(board, depth, -Infinity, Infinity, true);
   return result.move;

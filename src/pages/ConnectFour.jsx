@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Container, Row, Col, Button, Alert, Badge, Spinner } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
 import {
@@ -91,12 +91,15 @@ function ConnectFour() {
   const [winningCells, setWinningCells] = useState(null);
   const [isDraw, setIsDraw] = useState(false);
   const [moves, setMoves] = useState(0);
+  const [isPlayerTurn, setIsPlayerTurn] = useState(true);
   const [isAIThinking, setIsAIThinking] = useState(false);
   const [highlightedColumn, setHighlightedColumn] = useState(null);
+  const aiTimeoutRef = useRef(null);
 
   const checkGameEnd = useCallback((currentBoard, currentMoves) => {
     const playerWin = checkWin(currentBoard, PLAYER);
     if (playerWin) {
+      console.log(`[ConnectFour] PLAYER WINS at moves=${currentMoves}`);
       setWinner('Player');
       setWinningCells(playerWin.cells);
       saveGameResult('Player', currentMoves);
@@ -105,6 +108,7 @@ function ConnectFour() {
 
     const aiWin = checkWin(currentBoard, AI);
     if (aiWin) {
+      console.log(`[ConnectFour] AI WINS at moves=${currentMoves}`);
       setWinner('AI');
       setWinningCells(aiWin.cells);
       saveGameResult('AI', currentMoves);
@@ -112,6 +116,7 @@ function ConnectFour() {
     }
 
     if (isDraw(currentBoard)) {
+      console.log(`[ConnectFour] DRAW at moves=${currentMoves}`);
       setIsDraw(true);
       setWinningCells(null);
       saveGameResult('Draw', currentMoves);
@@ -134,41 +139,80 @@ function ConnectFour() {
   };
 
   const aiMove = useCallback(() => {
+    // Clear any existing timeout to prevent multiple AI moves
+    if (aiTimeoutRef.current) {
+      clearTimeout(aiTimeoutRef.current);
+    }
+
     setIsAIThinking(true);
-    
-    setTimeout(() => {
-      const aiCol = getAIMove(board, 'medium');
-      if (aiCol !== null) {
-        const result = dropPiece(board, aiCol, AI);
-        if (result) {
-          const newBoard = result.board;
-          setBoard(newBoard);
-          const newMoves = moves + 1;
-          setMoves(newMoves);
-          
-          if (!checkGameEnd(newBoard, newMoves)) {
-            setHighlightedColumn(null);
+
+    aiTimeoutRef.current = setTimeout(() => {
+      // Use functional updates to always work from latest state
+      setBoard(prevBoard => {
+        const aiCol = getAIMove(prevBoard, 'medium');
+        console.log(`[ConnectFour] AI chose column ${aiCol}`);
+        if (aiCol !== null) {
+          const result = dropPiece(prevBoard, aiCol, AI);
+          if (result) {
+            return result.board;
           }
         }
-      }
+        return prevBoard;
+      });
+
+      setMoves(prevMoves => {
+        const newMoves = prevMoves + 1;
+        console.log(`[ConnectFour] AI moved, newMoves: ${newMoves} (Player's turn next)`);
+
+        // Check game end after board update
+        setTimeout(() => {
+          setBoard(currentBoard => {
+            if (!checkGameEnd(currentBoard, newMoves)) {
+              setHighlightedColumn(null);
+            }
+            return currentBoard;
+          });
+        }, 0);
+
+        return newMoves;
+      });
+
       setIsAIThinking(false);
+      setIsPlayerTurn(true); // Switch back to player's turn
+      aiTimeoutRef.current = null;
     }, 600);
-  }, [board, moves, checkGameEnd]);
+  }, [checkGameEnd]);
 
   useEffect(() => {
     if (winner || isDraw) return;
 
-    const hasPlayerPieces = board.some(row => row.some(cell => cell === PLAYER));
-    const hasAIPieces = board.some(row => row.some(cell => cell === AI));
+    console.log(`[ConnectFour] useEffect: isPlayerTurn=${isPlayerTurn}, winner=${winner}, isDraw=${isDraw}, isAIThinking=${isAIThinking}`);
 
-    if (hasPlayerPieces && !hasAIPieces && !isAIThinking) {
+    // AI triggers when it's NOT the player's turn
+    if (!isPlayerTurn && !isAIThinking) {
+      console.log('[ConnectFour] AI TRIGGERED!');
       aiMove();
+    } else {
+      console.log('[ConnectFour] AI NOT triggered (waiting for player or AI already thinking)');
     }
-  }, [board, winner, isDraw, isAIThinking, aiMove]);
+  }, [winner, isDraw, isPlayerTurn, isAIThinking, aiMove]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (aiTimeoutRef.current) {
+        clearTimeout(aiTimeoutRef.current);
+        aiTimeoutRef.current = null;
+        console.log('[ConnectFour] Cleanup timeout on unmount');
+      }
+    };
+  }, []);
 
   const handleColumnClick = (col) => {
     if (winner || isDraw || isAIThinking) return;
     if (!isValidMove(board, col)) return;
+
+    console.log(`[ConnectFour] Player clicking column ${col}, moves: ${moves}, isPlayerTurn: ${isPlayerTurn}`);
 
     const result = dropPiece(board, col, PLAYER);
     if (result) {
@@ -176,7 +220,12 @@ function ConnectFour() {
       setBoard(newBoard);
       const newMoves = moves + 1;
       setMoves(newMoves);
-      
+
+      // Switch to AI's turn
+      setIsPlayerTurn(false);
+
+      console.log(`[ConnectFour] Player moved, newMoves: ${newMoves}, switching to AI turn`);
+
       if (!checkGameEnd(newBoard, newMoves)) {
         setHighlightedColumn(null);
       }
@@ -192,21 +241,30 @@ function ConnectFour() {
   };
 
   const resetGame = () => {
+    // Clear any pending AI timeout
+    if (aiTimeoutRef.current) {
+      clearTimeout(aiTimeoutRef.current);
+      aiTimeoutRef.current = null;
+    }
+
     setBoard(createBoard());
     setWinner(null);
     setWinningCells(null);
     setIsDraw(false);
     setMoves(0);
+    setIsPlayerTurn(true);
     setIsAIThinking(false);
     setHighlightedColumn(null);
+
+    console.log('[ConnectFour] Game reset');
   };
 
   const getStatusMessage = () => {
     if (winner) return winner === 'Player' ? '🎉 You Win!' : '🤖 AI Wins!';
     if (isDraw) return "🤝 It's a Draw!";
     if (isAIThinking) return '🤔 AI is thinking...';
-    if (moves === 0) return 'Your turn - Click any column to start!';
-    return 'Your turn!';
+    if (isPlayerTurn) return moves === 0 ? 'Your turn - Click any column to start!' : 'Your turn!';
+    return 'AI is making a move...';
   };
 
   return (
