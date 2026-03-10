@@ -95,6 +95,7 @@ function ConnectFour() {
   const [isAIThinking, setIsAIThinking] = useState(false);
   const [highlightedColumn, setHighlightedColumn] = useState(null);
   const aiTimeoutRef = useRef(null);
+  const isMounted = useRef(true);
 
   const checkGameEnd = useCallback((currentBoard, currentMoves) => {
     const playerWin = checkWin(currentBoard, PLAYER);
@@ -128,6 +129,7 @@ function ConnectFour() {
 
   const saveGameResult = async (result, moveCount) => {
     try {
+      console.log(`[ConnectFour] Saving game result: ${result}, moves: ${moveCount}`);
       await fetch('/api/games', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -144,62 +146,80 @@ function ConnectFour() {
       clearTimeout(aiTimeoutRef.current);
     }
 
+    console.log('[ConnectFour] AI move initiated, setting isAIThinking=true');
     setIsAIThinking(true);
 
     aiTimeoutRef.current = setTimeout(() => {
       // Use functional updates to always work from latest state
-      setBoard(prevBoard => {
-        const aiCol = getAIMove(prevBoard, 'medium');
-        console.log(`[ConnectFour] AI chose column ${aiCol}`);
-        if (aiCol !== null) {
-          const result = dropPiece(prevBoard, aiCol, AI);
-          if (result) {
-            return result.board;
+      setWinner(prevWinner => {
+        setIsDraw(prevIsDraw => {
+          // Double-check state is still valid before making AI move
+          if (prevWinner || prevIsDraw) {
+            console.log('[ConnectFour] Aborting AI move - game already ended');
+            setIsAIThinking(false);
+            aiTimeoutRef.current = null;
+            return prevWinner;
           }
-        }
-        return prevBoard;
-      });
 
-      setMoves(prevMoves => {
-        const newMoves = prevMoves + 1;
-        console.log(`[ConnectFour] AI moved, newMoves: ${newMoves} (Player's turn next)`);
+          // Get current board state
+          setBoard(prevBoard => {
+            const aiCol = getAIMove(prevBoard, 'medium');
+            console.log(`[ConnectFour] AI chose column ${aiCol}`);
+            if (aiCol !== null) {
+              const result = dropPiece(prevBoard, aiCol, AI);
+              if (result) {
+                // Update moves and check game end
+                setMoves(prevMoves => {
+                  const newMoves = prevMoves + 1;
+                  console.log(`[ConnectFour] AI moved, newMoves: ${newMoves} (Player's turn next)`);
 
-        // Check game end after board update
-        setTimeout(() => {
-          setBoard(currentBoard => {
-            if (!checkGameEnd(currentBoard, newMoves)) {
-              setHighlightedColumn(null);
+                  // Check game end after board update
+                  setTimeout(() => {
+                    setBoard(currentBoard => {
+                      if (!checkGameEnd(currentBoard, newMoves)) {
+                        setHighlightedColumn(null);
+                      }
+                      return currentBoard;
+                    });
+                  }, 0);
+
+                  return newMoves;
+                });
+
+                return result.board;
+              }
             }
-            return currentBoard;
+            return prevBoard;
           });
-        }, 0);
 
-        return newMoves;
+          setIsAIThinking(false);
+          setIsPlayerTurn(true); // Switch back to player's turn
+          aiTimeoutRef.current = null;
+          return prevWinner;
+        });
+        return prevWinner;
       });
-
-      setIsAIThinking(false);
-      setIsPlayerTurn(true); // Switch back to player's turn
-      aiTimeoutRef.current = null;
     }, 600);
   }, [checkGameEnd]);
 
   useEffect(() => {
-    if (winner || isDraw) return;
+    if (winner || isDraw || isAIThinking) return;
 
     console.log(`[ConnectFour] useEffect: isPlayerTurn=${isPlayerTurn}, winner=${winner}, isDraw=${isDraw}, isAIThinking=${isAIThinking}`);
 
     // AI triggers when it's NOT the player's turn
-    if (!isPlayerTurn && !isAIThinking) {
+    if (!isPlayerTurn) {
       console.log('[ConnectFour] AI TRIGGERED!');
       aiMove();
     } else {
-      console.log('[ConnectFour] AI NOT triggered (waiting for player or AI already thinking)');
+      console.log('[ConnectFour] AI NOT triggered (waiting for player)');
     }
   }, [winner, isDraw, isPlayerTurn, isAIThinking, aiMove]);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      isMounted.current = false;
       if (aiTimeoutRef.current) {
         clearTimeout(aiTimeoutRef.current);
         aiTimeoutRef.current = null;
@@ -211,6 +231,10 @@ function ConnectFour() {
   const handleColumnClick = (col) => {
     if (winner || isDraw || isAIThinking) return;
     if (!isValidMove(board, col)) return;
+    if (!isPlayerTurn) {
+      console.log('[ConnectFour] Player click ignored - not player turn');
+      return;
+    }
 
     console.log(`[ConnectFour] Player clicking column ${col}, moves: ${moves}, isPlayerTurn: ${isPlayerTurn}`);
 
@@ -221,13 +245,16 @@ function ConnectFour() {
       const newMoves = moves + 1;
       setMoves(newMoves);
 
-      // Switch to AI's turn
-      setIsPlayerTurn(false);
+      console.log(`[ConnectFour] Player moved, newMoves: ${newMoves}, checking ending before switching to AI`);
 
-      console.log(`[ConnectFour] Player moved, newMoves: ${newMoves}, switching to AI turn`);
-
+      // Check game end before switching to AI
       if (!checkGameEnd(newBoard, newMoves)) {
+        // Only switch to AI's turn if game is still ongoing
+        console.log('[ConnectFour] Game continuing, switching to AI turn');
+        setIsPlayerTurn(false);
         setHighlightedColumn(null);
+      } else {
+        console.log('[ConnectFour] Game ended, keeping isPlayerTurn=true');
       }
     }
   };
