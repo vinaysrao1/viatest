@@ -1,0 +1,15 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = "postgresql://user@localhost:5432/viadb?schema=public"
+}
+
+model Game {
+  id        Int      @id @default(autoincrement())
+  winner    String?
+  moves     Int      @default(0)
+  createdAt DateTime @default(now())
+}
